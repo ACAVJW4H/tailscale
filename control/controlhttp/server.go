@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 
@@ -30,6 +31,12 @@ func AcceptHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request, pri
 	if next != upgradeHeader {
 		http.Error(w, "unknown next protocol", http.StatusBadRequest)
 		return nil, fmt.Errorf("client requested unhandled next protocol %q", next)
+	}
+
+	init, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "error reading request", http.StatusInternalServerError)
+		return nil, fmt.Errorf("reading client request body: %v", err)
 	}
 
 	hijacker, ok := w.(http.Hijacker)
@@ -54,7 +61,7 @@ func AcceptHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request, pri
 		conn = &drainBufConn{conn, brw.Reader}
 	}
 
-	nc, err := controlbase.Server(ctx, conn, private)
+	nc, err := controlbase.Server(ctx, conn, private, init)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("noise handshake failed: %w", err)

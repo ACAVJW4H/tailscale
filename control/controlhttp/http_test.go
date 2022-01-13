@@ -171,6 +171,7 @@ func testControlHTTP(t *testing.T, proxy proxy) {
 	if err != nil {
 		t.Fatalf("dialing controlhttp: %v", err)
 	}
+	defer conn.Close()
 	si := <-sch
 	if si.err != nil {
 		t.Fatalf("controlhttp server got error: %v", err)

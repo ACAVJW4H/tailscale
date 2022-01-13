@@ -19,9 +19,11 @@
 package controlhttp
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -78,29 +80,48 @@ type dialParams struct {
 }
 
 func (a *dialParams) dial() (*controlbase.Conn, error) {
+	init, cont, err := controlbase.ClientDeferred(a.machineKey, a.controlKey)
+	if err != nil {
+		return nil, err
+	}
+
 	u := &url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort(a.host, a.httpPort),
 		Path:   "/switch",
 	}
-	conn, httpErr := a.tryURL(u)
+	conn, httpErr := a.tryURL(u, init)
 	if httpErr == nil {
-		return controlbase.Client(a.ctx, conn, a.machineKey, a.controlKey)
+		ret, err := cont(a.ctx, conn)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return ret, nil
 	}
 
 	// Connecting over plain HTTP failed, assume it's an HTTP proxy
 	// being difficult and see if we can get through over HTTPS.
 	u.Scheme = "https"
 	u.Host = net.JoinHostPort(a.host, a.httpsPort)
-	conn, tlsErr := a.tryURL(u)
+	init, cont, err = controlbase.ClientDeferred(a.machineKey, a.controlKey)
+	if err != nil {
+		return nil, err
+	}
+	conn, tlsErr := a.tryURL(u, init)
 	if tlsErr == nil {
-		return controlbase.Client(a.ctx, conn, a.machineKey, a.controlKey)
+		ret, err := cont(a.ctx, conn)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return ret, nil
 	}
 
 	return nil, fmt.Errorf("all connection attempts failed (HTTP: %v, HTTPS: %v)", httpErr, tlsErr)
 }
 
-func (a *dialParams) tryURL(u *url.URL) (net.Conn, error) {
+func (a *dialParams) tryURL(u *url.URL, init []byte) (net.Conn, error) {
 	dns := &dnscache.Resolver{
 		Forward:          dnscache.Get().Forward,
 		LookupIPFallback: dnsfallback.Lookup,
@@ -108,6 +129,7 @@ func (a *dialParams) tryURL(u *url.URL) (net.Conn, error) {
 	}
 	dialer := netns.NewDialer(log.Printf)
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	defer tr.CloseIdleConnections()
 	tr.Proxy = a.proxyFunc
 	tshttpproxy.SetTransportGetProxyConnectHeader(tr)
 	tr.DialContext = dnscache.Dialer(dialer.DialContext, dns)
@@ -147,7 +169,6 @@ func (a *dialParams) tryURL(u *url.URL) (net.Conn, error) {
 		},
 	}
 	ctx := httptrace.WithClientTrace(a.ctx, &trace)
-
 	req := &http.Request{
 		Method: "POST",
 		URL:    u,
@@ -155,6 +176,7 @@ func (a *dialParams) tryURL(u *url.URL) (net.Conn, error) {
 			"Upgrade":    []string{upgradeHeader},
 			"Connection": []string{"upgrade"},
 		},
+		Body: io.NopCloser(bytes.NewBuffer(init)),
 	}
 	req = req.WithContext(ctx)
 
