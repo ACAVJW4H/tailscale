@@ -129,7 +129,6 @@ func (a *dialParams) tryURL(u *url.URL, init []byte) (net.Conn, error) {
 	}
 	dialer := netns.NewDialer(log.Printf)
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	defer tr.CloseIdleConnections()
 	tr.Proxy = a.proxyFunc
 	tshttpproxy.SetTransportGetProxyConnectHeader(tr)
 	tr.DialContext = dnscache.Dialer(dialer.DialContext, dns)

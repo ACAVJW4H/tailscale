@@ -18,6 +18,7 @@ import (
 	"sync"
 	"testing"
 
+	"tailscale.com/control/controlbase"
 	"tailscale.com/net/socks5"
 	"tailscale.com/types/key"
 )
@@ -95,6 +96,7 @@ func TestControlHTTP(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			log.Println("XXXX in ", test.name)
 			testControlHTTP(t, test.proxy)
 		})
 	}
@@ -116,7 +118,7 @@ func testControlHTTP(t *testing.T, proxy proxy) {
 			res.clientAddr = conn.RemoteAddr().String()
 			res.version = conn.ProtocolVersion()
 			res.peer = conn.Peer()
-			conn.Close()
+			res.conn = conn
 		}
 		sch <- res
 	})
@@ -173,6 +175,9 @@ func testControlHTTP(t *testing.T, proxy proxy) {
 	}
 	defer conn.Close()
 	si := <-sch
+	if si.conn != nil {
+		defer si.conn.Close()
+	}
 	if si.err != nil {
 		t.Fatalf("controlhttp server got error: %v", err)
 	}
@@ -195,6 +200,7 @@ type serverResult struct {
 	clientAddr string
 	version    int
 	peer       key.MachinePublic
+	conn       *controlbase.Conn
 }
 
 type proxy interface {
